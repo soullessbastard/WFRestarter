@@ -5,7 +5,7 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
         KBDLLHOOKSTRUCT* p = (KBDLLHOOKSTRUCT*)lParam;
 
         if (wParam == WM_KEYDOWN) {
-            if (p->vkCode == VK_HOME) {
+            if (p->vkCode == g_hotkeyVK) {
                 PostThreadMessage(g_mainThreadId, WM_USER + 1, 0, 0);
             }
 

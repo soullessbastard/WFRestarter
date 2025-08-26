@@ -1,5 +1,8 @@
 #include "process_kill.h"
 
+#include <iostream>
+#include <string>
+#include <tlhelp32.h>
 
 std::vector<DWORD> get_process_ids_by_names(const std::vector<std::wstring>& names){
     std::vector<DWORD> pids;

@@ -6,24 +6,33 @@
 #include <fcntl.h>
 #include <cstdlib>
 #include <algorithm>
-
+#include <future>
+#include <chrono>
 
 // UTILS
 
 #include "utils/system_hook/system_hook.h"
 #include "utils/process_kill/process_kill.h"
 #include "utils/config_gen/config_gen.h"
+#include "utils/message_peeker/message_peeker.h"
 
-// GLOBAL INIT
+// FEATURES
+
+#include "features/settings_manager/settings_manager.h"
+#include "features/settings_validator/settings_validator.h"
+
+
+// GLOBAL VAR INIT
 
 HHOOK hHook = nullptr;
 DWORD g_mainThreadId = GetCurrentThreadId();
-
+int g_hotkeyVK;
 
 
 int Run() {
     AllocConsole(); 
     SetConsoleTitle("WFRestarter");
+
     FILE* fp;
     freopen_s(&fp, "CONOUT$", "w", stdout);
     freopen_s(&fp, "CONIN$", "r", stdin);
@@ -43,43 +52,35 @@ int Run() {
     size_t len = 0;
     const wchar_t* configFile = L"config.ini";
     std::wstring configPath = GetExecutableDir() + L"\\" + configFile;
+
     std::wstring method;
     std::wstring logpath;
     std::wstring steampath;
+    std::wstring hotkeyname;
 
+    SettingsManager settings(configPath);
+    SettingsValidator validator;
 
-    if (!FileExists(configFile)) {
-        std::wcout << L"Config file not found. Creating default config.\n";
+    std::thread msgThread(MessageLoopThread);
 
-        CreateDefaultConfig(configPath.c_str());
-                
-        while (true) {
-            std::wcout << L"Please specify installation method (steam/client): ";
-            std::getline(std::wcin, method);
-        
-            method.erase(std::remove(method.begin(), method.end(), L'\r'), method.end());
-            method.erase(std::remove(method.begin(), method.end(), L'\n'), method.end());
-        
-            std::wstring method_lower = method;
-            std::transform(method_lower.begin(), method_lower.end(), method_lower.begin(), ::towlower);
-        
-            if (method_lower == L"steam" || method_lower == L"client") {
-                WritePrivateProfileStringW(L"Settings", L"install_method", method_lower.c_str(), configPath.c_str());
-                std::wcout << L"Installation method saved in config.ini\n";
-                break;
-            } else {
-                std::wcout << L"Invalid input. Please enter 'steam' or 'client'.\n";
-            }
-        }
-    }
+    settings.PreLoad();
+    settings.Load();
+    settings.ShowMenu();
+
+    system("cls");
 
     if (FileExists(configFile)) {
         wchar_t buffer[256];
-        GetPrivateProfileStringW(L"Settings", L"install_method", L"", buffer, sizeof(buffer) / sizeof(wchar_t), configPath.c_str());
+        // GetPrivateProfileStringW(L"Settings", L"install_method", L"", buffer, sizeof(buffer) / sizeof(wchar_t), configPath.c_str());
 
-        method = std::wstring(buffer);
+        method = settings.GetInstallMethod();
+        g_hotkeyVK = settings.GetHotkeyVK();
+        hotkeyname = settings.GetHotkeyName();
 
-        if (method != L"steam" && method != L"client") {
+
+        std::wcout << L"Installation Method: " << method << L"\nHotkey: " <<  hotkeyname << "\n";
+
+        if (!validator.ValidateInstallMethod(method) or !validator.ValidateHotkey(g_hotkeyVK)) {
             if (DeleteFileW(configFile)) {
                 std::wcout << L"Invalid installation method. Configuration file has been removed.\n";
             } 
@@ -89,10 +90,12 @@ int Run() {
             return 1;
 
         }
-        std::wcout << L"Installation method loaded: " << buffer << L"\n";
+    }
+    else{
+        return 1;
     }
 
-
+    
     if (method == L"client"){
         wchar_t* localappdata = nullptr;
         size_t len = 0;
@@ -111,7 +114,7 @@ int Run() {
     
 
 
-    std::wcout << L"Waiting for Home key press for closing Warframe...\n";
+    std::wcout << L"Waiting for " << hotkeyname <<" key press for closing Warframe...\n";
 
     hHook = SetWindowsHookEx(WH_KEYBOARD_LL, LowLevelKeyboardProc, nullptr, 0);
     if (!hHook) {
@@ -122,15 +125,10 @@ int Run() {
     MSG msg;
     bool running = true;
 
-// while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) {
-    // TranslateMessage(&msg);
-    // DispatchMessage(&msg);
-
-//}
     while (running) {
         while (GetMessage(&msg, nullptr, 0, 0)) {
             if (msg.message == WM_USER + 1) {
-                std::wcout << L"Home key pressed! Closing Warframe...\n";
+                std::wcout << hotkeyname << L" key pressed! Closing Warframe...\n";
                 kill_process_by_id();
                 
                 if (!method.empty()){
@@ -162,11 +160,10 @@ int Run() {
     }
 
     UnhookWindowsHookEx(hHook);
-
-    std::wcout << L"Closing app...\n";
+    
     
     for (int i = 3; i > 0; --i) {
-        std::wcout << L"\rClosing app in: " << i << L"   "; 
+        std::wcout << L"\rClosing app in: " << i;
         std::wcout.flush();
         Sleep(1000);
     }
@@ -174,6 +171,31 @@ int Run() {
     return 0;
 }
 
-int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
-    return Run();
+// int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
+//     return Run();
+// }
+
+
+int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShowCmd) {
+    HANDLE hMutex = CreateMutex(NULL, FALSE, "WFRestarter_CustomMutex");
+
+    if (GetLastError() == ERROR_ALREADY_EXISTS) {
+
+        HWND hwndExisting = FindWindow(NULL, "WFRestarter.exe");
+
+        if (hwndExisting) {
+            ShowWindow(hwndExisting, SW_RESTORE);
+            SetForegroundWindow(hwndExisting);
+        }
+        return 0;
+    }
+
+    int ret = Run();
+
+    if (hMutex) {
+        ReleaseMutex(hMutex);
+        CloseHandle(hMutex);
+    }
+
+    return ret;
 }

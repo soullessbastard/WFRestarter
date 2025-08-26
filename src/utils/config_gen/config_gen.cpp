@@ -1,5 +1,7 @@
 #include "config_gen.h"
-
+#include <fstream>
+#include <windows.h>
+#include <iostream>
 
 std::wstring GetExecutableDir() {
     wchar_t path[MAX_PATH];
@@ -22,6 +24,7 @@ bool FileExists(const wchar_t* filename) {
 void CreateDefaultConfig(const wchar_t* filename) {
 
     WritePrivateProfileStringW(L"Settings", L"install_method", L"", filename);
+    WritePrivateProfileStringW(L"Settings", L"hotkey", L"", filename);
 }
 
 void CreateEmptyFileIfNotExists(const wchar_t* filename) {
